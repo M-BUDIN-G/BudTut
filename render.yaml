@@ -1,0 +1,27 @@
+# Render "Blueprint" — lets Render create the service (with the right settings) straight from
+# this repo in one step: New -> Blueprint -> pick this repo -> Apply.
+# A persistent disk needs a paid plan (Starter or above); the free plan can't mount one, and its
+# service also sleeps when idle, which would corrupt/reset the JSON database on every wake-up.
+services:
+  - type: web
+    name: budtut
+    runtime: node
+    plan: starter
+    region: frankfurt
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    disk:
+      name: budtut-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /data
+      - key: CANONICAL_HOST
+        value: budtut.eu
+      - key: ADMIN_TOKEN
+        generateValue: true
