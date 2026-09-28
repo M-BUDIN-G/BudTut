@@ -1127,6 +1127,8 @@ textarea.input { height: auto; min-height: 140px; padding: 14px 18px; resize: ve
 .jd__status--done { background: #d1fae5; color: #047857; }
 
 </style>
+<script src="https://accounts.google.com/gsi/client" async onload="window.onGsiLoad && window.onGsiLoad()"></script>
+<script src="https://www.google.com/recaptcha/api.js?onload=onRecaptchaLoad&render=explicit" async defer></script>
 </head>
 <body data-page="home" data-title-key="h1">
 
@@ -1302,6 +1304,8 @@ textarea.input { height: auto; min-height: 140px; padding: 14px 18px; resize: ve
       </div>
     </fieldset>
 
+    <p class="auth__note is-hidden" id="googleBanner"><span data-i18n="google_continue_as"></span> <strong id="googleBannerEmail"></strong> &middot; <a href="#" id="googleCancel" data-i18n="google_cancel"></a></p>
+
     <h3 class="sect is-hidden" id="sectPersonal" data-i18n="sect_personal"></h3>
     <h3 class="sect is-hidden" id="sectRep" data-i18n="sect_rep"></h3>
     <div class="row">
@@ -1420,6 +1424,11 @@ textarea.input { height: auto; min-height: 140px; padding: 14px 18px; resize: ve
       <span class="field__err" aria-live="polite"></span>
     </div>
 
+    <div class="field is-hidden" id="captchaField">
+      <div id="recaptchaBox"></div>
+      <span class="field__err" id="captchaErr" aria-live="polite"></span>
+    </div>
+
     <button type="submit" class="btn btn--primary btn--block" id="submitBtn" data-i18n="create"></button>
     <p class="auth__msg" id="regMsg" role="status" hidden></p>
 
@@ -1434,6 +1443,7 @@ textarea.input { height: auto; min-height: 140px; padding: 14px 18px; resize: ve
     <p class="auth__note is-hidden" id="socialNote" data-i18n="no_social"></p>
 
     <p class="auth__login"><span data-i18n="have_account"></span> <a href="#login" data-i18n="login"></a></p>
+    <div id="gsiButton" style="position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;" aria-hidden="true"></div>
   </form>
 
   <section class="auth__card regdone is-hidden" id="regDone" aria-live="polite">
@@ -2037,7 +2047,7 @@ textarea.input { height: auto; min-height: 140px; padding: 14px 18px; resize: ve
       ob_unverified: "Firma niezweryfikowana", ob_title: "Zweryfikuj firmę", ob_intro: "Aby uzyskać odznakę „Zweryfikowana firma” i w pełni korzystać z BudTut, potwierdź dwie rzeczy:",
       ob_s1: "Twoją tożsamość", ob_s1_hint: "Potwierdzenie zajmuje kilka minut. Wybierzesz jedną z dostępnych metod weryfikacji.", ob_start: "Rozpocznij weryfikację",
       ob_s2: "Twoje uprawnienie do reprezentowania firmy", ob_s2_txt: "Sprawdzimy w rejestrach, czy możesz działać w imieniu tej firmy. W razie potrzeby poprosimy o dodatkowy dokument.", ob_s2_lock: "Dostępne po potwierdzeniu tożsamości",
-      ob_demo: "Demo: weryfikacja zostanie uruchomiona po podłączeniu serwera.", ob_later: "Zrobię to później" },
+      ob_demo: "Demo: weryfikacja zostanie uruchomiona po podłączeniu serwera.", ob_later: "Zrobię to później", err_captcha: "Potwierdź, że nie jesteś robotem.", google_not_ready: "Logowanie przez Google jest chwilowo niedostępne.", google_error: "Nie udało się zalogować przez Google. Spróbuj ponownie.", google_continue_as: "Kontynuujesz przez Google jako", google_cancel: "Anuluj", apple_soon: "Logowanie przez Apple pojawi się wkrótce." },
     EN: { dob: 'Date of birth', dob_hint: 'Needed for identity verification. Not shown on your profile.', dob_d: 'DD', dob_m: 'Month', dob_y: 'YYYY', err_dob: 'Enter your full date of birth.', err_dob_invalid: 'This date does not exist.', err_dob_under: 'You must be at least 18 years old.', no_social: 'Sole-trader and company accounts need the full registration with business details — signing up with Google or Apple is available only for private persons.', gender: 'Gender', gender_m: 'Male', gender_f: 'Female', err_gender: 'Select your gender.', sect_rep: "Person representing the company", sect_biz_co: "Company details", position: "Position", pos_ph: "Select position", pos_president: "President of the Board", pos_member: "Board Member", pos_proxy: "Proxy (Prokurent)", pos_other: "Other", err_position: "Select your position.",
       find_co: "Find company data", lbl_nip: "NIP", lbl_krs: "KRS", lbl_regon: "REGON", lbl_legal: "Legal form", lbl_addr: "Address", lbl_status: "Status", legal_sp_zoo: "Limited liability company (Sp. z o.o.)", status_active: "Active",
       confirm_btn_co: "✓ This is my company", verify_co: "The company stays unverified until you confirm your identity and your authority to represent it.",
@@ -2045,7 +2055,7 @@ textarea.input { height: auto; min-height: 140px; padding: 14px 18px; resize: ve
       ob_unverified: "Company not verified", ob_title: "Verify your company", ob_intro: "To earn the “Verified company” badge and use BudTut fully, confirm two things:",
       ob_s1: "Your identity", ob_s1_hint: "It takes a few minutes. You will choose one of the available verification methods.", ob_start: "Start verification",
       ob_s2: "Your authority to represent the company", ob_s2_txt: "We will check the registers to see whether you can act on behalf of this company. If needed, we will ask for an extra document.", ob_s2_lock: "Available after your identity is confirmed",
-      ob_demo: "Demo: verification will start once the server is connected.", ob_later: "I’ll do this later" },
+      ob_demo: "Demo: verification will start once the server is connected.", ob_later: "I’ll do this later", err_captcha: "Confirm you’re not a robot.", google_not_ready: "Google sign-in is temporarily unavailable.", google_error: "Google sign-in failed. Please try again.", google_continue_as: "Continuing with Google as", google_cancel: "Cancel", apple_soon: "Sign in with Apple is coming soon." },
     UA: { dob: 'Дата народження', dob_hint: 'Потрібна для підтвердження особи. Не відображається в профілі.', dob_d: 'ДД', dob_m: 'Місяць', dob_y: 'РРРР', err_dob: 'Вкажіть повну дату народження.', err_dob_invalid: 'Такої дати не існує.', err_dob_under: 'Вам має бути щонайменше 18 років.', no_social: 'Акаунти ФОП (JDG) і компаній потребують повної реєстрації з даними бізнесу — вхід через Google або Apple доступний лише для приватних осіб.', gender: 'Стать', gender_m: 'Чоловік', gender_f: 'Жінка', err_gender: 'Оберіть стать.', sect_rep: "Дані особи, яка представляє компанію", sect_biz_co: "Дані компанії", position: "Посада", pos_ph: "Оберіть посаду", pos_president: "Голова правління", pos_member: "Член правління", pos_proxy: "Прокурист", pos_other: "Інше", err_position: "Оберіть свою посаду.",
       find_co: "Отримати дані компанії", lbl_nip: "NIP", lbl_krs: "KRS", lbl_regon: "REGON", lbl_legal: "Правова форма", lbl_addr: "Адреса", lbl_status: "Статус", legal_sp_zoo: "Товариство з обмеженою відповідальністю", status_active: "Активна",
       confirm_btn_co: "✓ Це моя компанія", verify_co: "Компанія залишатиметься неверифікованою, доки ви не підтвердите свою особу та повноваження її представляти.",
@@ -2053,7 +2063,7 @@ textarea.input { height: auto; min-height: 140px; padding: 14px 18px; resize: ve
       ob_unverified: "Компанія неверифікована", ob_title: "Верифікуйте компанію", ob_intro: "Щоб отримати позначку «Верифікована компанія» та повноцінно користуватися BudTut, підтвердьте дві речі:",
       ob_s1: "Вашу особу", ob_s1_hint: "Це займає кілька хвилин. Ви оберете один із доступних способів верифікації.", ob_start: "Розпочати верифікацію",
       ob_s2: "Ваші повноваження представляти компанію", ob_s2_txt: "Ми перевіримо в реєстрах, чи можете ви діяти від імені цієї компанії. За потреби попросимо додатковий документ.", ob_s2_lock: "Доступно після підтвердження особи",
-      ob_demo: "Демо: верифікація запуститься після підключення сервера.", ob_later: "Зроблю це пізніше" },
+      ob_demo: "Демо: верифікація запуститься після підключення сервера.", ob_later: "Зроблю це пізніше", err_captcha: "Підтвердьте, що ви не робот.", google_not_ready: "Вхід через Google тимчасово недоступний.", google_error: "Не вдалося увійти через Google. Спробуйте ще раз.", google_continue_as: "Продовжуєте через Google як", google_cancel: "Скасувати", apple_soon: "Вхід через Apple з’явиться незабаром." },
   };
   Object.keys(REG2).forEach((l) => Object.assign(BT.I18N[l], REG2[l]));
 
@@ -2071,6 +2081,81 @@ textarea.input { height: auto; min-height: 140px; padding: 14px 18px; resize: ve
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   let submitted = false;
   const state = { type: 'person', biz: null, confirmed: false, token: 0 };
+
+  // ---------- Google Sign-In + reCAPTCHA ----------
+  const cfg = { googleClientId: null, recaptchaSiteKey: null };
+  let googleCredential = null;
+  let captchaWidgetId = null;
+  let gsiReady = false, captchaReady = false;
+
+  function getCaptchaResponse() {
+    if (window.grecaptcha && captchaWidgetId !== null) { try { return grecaptcha.getResponse(captchaWidgetId); } catch (e) { return ''; } }
+    return '';
+  }
+  function resetCaptcha() {
+    if (window.grecaptcha && captchaWidgetId !== null) { try { grecaptcha.reset(captchaWidgetId); } catch (e) {} }
+  }
+  function initCaptcha() {
+    if (captchaReady || !cfg.recaptchaSiteKey || !window.grecaptcha || !grecaptcha.render) return;
+    captchaReady = true;
+    captchaWidgetId = grecaptcha.render('recaptchaBox', { sitekey: cfg.recaptchaSiteKey });
+    $('captchaField').classList.remove('is-hidden');
+  }
+  window.onRecaptchaLoad = initCaptcha;
+
+  function lockGoogleFields(on) {
+    ['first', 'last', 'email'].forEach((id) => { $(id).readOnly = on; });
+    $('pwBlock').classList.toggle('is-hidden', on);
+    $('socialBlock').classList.toggle('is-hidden', on || state.type !== 'person');
+    $('googleBanner').classList.toggle('is-hidden', !on);
+  }
+  function startGoogleFlow(credential, profile) {
+    googleCredential = credential;
+    $('first').value = profile.first || '';
+    $('last').value = profile.last || '';
+    $('email').value = profile.email || '';
+    $('googleBannerEmail').textContent = profile.email || '';
+    lockGoogleFields(true);
+    if (submitted) validate();
+  }
+  function cancelGoogleFlow() {
+    googleCredential = null;
+    lockGoogleFields(false);
+    if (submitted) validate();
+  }
+  async function handleGoogleCredential(response) {
+    const cred = response && response.credential;
+    if (!cred) return;
+    const res = await BT.api('/api/auth/google', { method: 'POST', body: { credential: cred } });
+    if (!res.ok) { BT.toast(T('google_error')); return; }
+    if (res.data.isNew) { startGoogleFlow(cred, res.data.profile); return; }
+    BT.setSession(res.data.token, res.data.user);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    BT.toast(T('toast_login'));
+  }
+  function initGoogle() {
+    if (gsiReady || !cfg.googleClientId || !window.google || !google.accounts || !google.accounts.id) return;
+    gsiReady = true;
+    google.accounts.id.initialize({ client_id: cfg.googleClientId, callback: handleGoogleCredential, auto_select: false, ux_mode: 'popup' });
+    google.accounts.id.renderButton($('gsiButton'), { type: 'standard' });
+  }
+  window.onGsiLoad = initGoogle;
+
+  const socialBtns = document.querySelectorAll('#regForm .social__btn');
+  if (socialBtns[0]) socialBtns[0].addEventListener('click', () => {
+    if (!cfg.googleClientId) { BT.toast(T('google_not_ready')); return; }
+    const inner = document.querySelector('#gsiButton div[role="button"]');
+    if (inner) inner.click(); else BT.toast(T('google_not_ready'));
+  });
+  if (socialBtns[1]) socialBtns[1].addEventListener('click', () => BT.toast(T('apple_soon')));
+  const googleCancelLink = $('googleCancel');
+  if (googleCancelLink) googleCancelLink.addEventListener('click', (e) => { e.preventDefault(); cancelGoogleFlow(); });
+
+  BT.api('/api/config').then((r) => {
+    if (r.ok && r.data) { cfg.googleClientId = r.data.googleClientId || null; cfg.recaptchaSiteKey = r.data.recaptchaSiteKey || null; }
+    initGoogle();
+    initCaptcha();
+  });
 
 
   // ---------- Date of birth: three selects (day / month / year) ----------
@@ -2205,6 +2290,7 @@ textarea.input { height: auto; min-height: 140px; padding: 14px 18px; resize: ve
     setKey($('nip'), co ? 'ph_nip_co' : 'ph_nip', 'ph');
     setKey($('findBtn'), findKey());
     if (changed) { resetBiz(false); setErr($('nip'), ''); }
+    if (changed && val !== 'person' && googleCredential) cancelGoogleFlow();
     if (submitted) validate();
   }
   form.querySelectorAll('input[name="type"]').forEach((r) => r.addEventListener('change', syncType));
@@ -2262,9 +2348,13 @@ textarea.input { height: auto; min-height: 140px; padding: 14px 18px; resize: ve
     else { setErr($('position'), ''); setErr($('authority'), ''); }
     if (state.type !== 'person') chk($('nip'), !state.biz ? 'err_find' : state.confirmed ? '' : 'err_confirm_biz');
     else setErr($('nip'), '');
-    chk($('password'), !$('password').value ? 'err_required' : $('password').value.length >= 8 ? '' : 'err_pw_short');
-    chk($('password2'), !$('password2').value ? 'err_required' : $('password2').value === $('password').value ? '' : 'err_pw_match');
+    if (!googleCredential) {
+      chk($('password'), !$('password').value ? 'err_required' : $('password').value.length >= 8 ? '' : 'err_pw_short');
+      chk($('password2'), !$('password2').value ? 'err_required' : $('password2').value === $('password').value ? '' : 'err_pw_match');
+    }
     chk($('terms'), $('terms').checked ? '' : 'err_terms');
+    if ($('captchaErr')) $('captchaErr').textContent = '';
+    if (cfg.recaptchaSiteKey && !getCaptchaResponse()) { if ($('captchaErr')) $('captchaErr').textContent = T('err_captcha'); ok = false; }
     return ok;
   }
   form.addEventListener('input', () => { if (submitted) validate(); });
@@ -2292,7 +2382,7 @@ textarea.input { height: auto; min-height: 140px; padding: 14px 18px; resize: ve
   document.addEventListener('bt:lang', renderOnboarding);
 
   // ---------- Register (POST /api/auth/register) ----------
-  const CODE_KEY = { required: 'err_required', email_invalid: 'err_email', email_taken: 'err_email_taken', phone_invalid: 'err_phone', password_short: 'err_pw_short', terms: 'err_terms', business_invalid: 'err_find', business_unconfirmed: 'err_confirm_biz', authority: 'err_authority', gender: 'err_gender', birth_invalid: 'err_dob_invalid', underage: 'err_dob_under' };
+  const CODE_KEY = { required: 'err_required', email_invalid: 'err_email', email_taken: 'err_email_taken', phone_invalid: 'err_phone', password_short: 'err_pw_short', terms: 'err_terms', business_invalid: 'err_find', business_unconfirmed: 'err_confirm_biz', authority: 'err_authority', gender: 'err_gender', birth_invalid: 'err_dob_invalid', underage: 'err_dob_under', captcha_invalid: 'err_captcha' };
   const FIELD_INPUT = { first: 'first', last: 'last', email: 'email', phone: 'phone', password: 'password', terms: 'terms', position: 'position', authority: 'authority', business: 'nip', gender: 'gender_male', birth: 'dob_d' };
   let done = null;
   function renderDone() {
@@ -2312,24 +2402,37 @@ textarea.input { height: auto; min-height: 140px; padding: 14px 18px; resize: ve
       return;
     }
     const co = state.type === 'company';
-    const payload = {
-      type: state.type, first: $('first').value.trim(), last: $('last').value.trim(), email: $('email').value.trim(),
-      phone: $('phone').value.trim(), password: $('password').value, terms: $('terms').checked,
-    };
-    if (state.type !== 'person') payload.business = { number: $('nip').value.replace(/\D/g, ''), confirmed: state.confirmed };
-    payload.birth = dob.read($('dobBox')).value;
-    if (!co) payload.gender = form.querySelector('input[name="gender"]:checked').value;
-    if (co) { payload.position = $('position').value; payload.authority = $('authority').checked; }
+    const captcha = getCaptchaResponse();
+    let endpoint, payload;
+    if (googleCredential) {
+      endpoint = '/api/auth/google/register';
+      payload = {
+        credential: googleCredential, phone: $('phone').value.trim(), birth: dob.read($('dobBox')).value,
+        gender: form.querySelector('input[name="gender"]:checked').value, terms: $('terms').checked, captcha,
+      };
+    } else {
+      endpoint = '/api/auth/register';
+      payload = {
+        type: state.type, first: $('first').value.trim(), last: $('last').value.trim(), email: $('email').value.trim(),
+        phone: $('phone').value.trim(), password: $('password').value, terms: $('terms').checked, captcha,
+      };
+      if (state.type !== 'person') payload.business = { number: $('nip').value.replace(/\D/g, ''), confirmed: state.confirmed };
+      payload.birth = dob.read($('dobBox')).value;
+      if (!co) payload.gender = form.querySelector('input[name="gender"]:checked').value;
+      if (co) { payload.position = $('position').value; payload.authority = $('authority').checked; }
+    }
 
     const btn = $('submitBtn'); btn.disabled = true; msg.hidden = true;
-    const res = await BT.api('/api/auth/register', { method: 'POST', body: payload });
+    const res = await BT.api(endpoint, { method: 'POST', body: payload });
     btn.disabled = false;
 
     if (!res.ok) {
+      resetCaptcha();
       const errs = res.data && res.data.errors;
       if (errs) {
         let first = null;
         Object.keys(errs).forEach((f) => {
+          if (f === 'captcha') { if ($('captchaErr')) $('captchaErr').textContent = T('err_captcha'); return; }
           const input = $(FIELD_INPUT[f]); if (!input) return;
           setErr(input, CODE_KEY[errs[f]] || 'err_required'); first = first || input;
         });
@@ -2340,7 +2443,8 @@ textarea.input { height: auto; min-height: 140px; padding: 14px 18px; resize: ve
       return;
     }
     BT.setSession(res.data.token, res.data.user);
-    BT.toast(T('email_check_toast'));
+    if (!googleCredential) BT.toast(T('email_check_toast'));
+    googleCredential = null;
     if (co) { showOnboarding(); return; }
     done = res.data.user;
     form.classList.add('is-hidden');

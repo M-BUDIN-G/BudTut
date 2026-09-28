@@ -3,9 +3,18 @@
   "version": "0.1.0",
   "description": "BudTut demo backend: registration, login and job posting (Express + JSON file storage)",
   "main": "server.js",
-  "scripts": { "start": "node server.js", "dev": "node --watch server.js" },
-  "engines": { "node": ">=18" },
-  "dependencies": { "express": "^4.19.2", "nodemailer": "^6.9.14" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "google-auth-library": "^9.15.1",
+    "nodemailer": "^6.9.14"
+  },
   "license": "UNLICENSED",
   "private": true
 }

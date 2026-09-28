@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const nodemailer = require('nodemailer');
+const { OAuth2Client } = require('google-auth-library');
 
 const PORT = process.env.PORT || 3000;
 // On a host with an ephemeral filesystem (most PaaS "app" containers) this MUST point at a
@@ -31,6 +32,17 @@ const MAIL_FROM = process.env.MAIL_FROM || SMTP_USER;
 // (registration is free but requires logging in with a Profil Zaufany). Until this is set, JDG
 // lookups fall back to a clearly-marked demo result so the registration form stays usable.
 const CEIDG_JWT = process.env.CEIDG_JWT || '';
+// Google Sign-In (free) -- create an OAuth Client ID ("Web application") at
+// https://console.cloud.google.com/apis/credentials, add this site's origin(s) under
+// "Authorized JavaScript origins", then set GOOGLE_CLIENT_ID. Until set, the Google button tells
+// the user the feature isn't configured yet instead of failing silently.
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
+// reCAPTCHA v2 checkbox (free) -- register the site at https://www.google.com/recaptcha/admin to
+// get a site key (public, goes in the page) and a secret key (private, server-only). Until
+// RECAPTCHA_SECRET_KEY is set, registration simply skips the check (keeps local dev usable).
+const RECAPTCHA_SITE_KEY = process.env.RECAPTCHA_SITE_KEY || '';
+const RECAPTCHA_SECRET_KEY = process.env.RECAPTCHA_SECRET_KEY || '';
 
 // ---------- Tiny JSON database ----------
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -100,6 +112,24 @@ async function sendMail(to, subject, text, html) {
   catch (e) { console.error('sendMail failed:', e.message); }
 }
 
+// ---------- reCAPTCHA v2 ----------
+async function verifyCaptcha(token, ip) {
+  if (!RECAPTCHA_SECRET_KEY) return true; // not configured -> don't block local/dev usage
+  if (!token) return false;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    const body = new URLSearchParams({ secret: RECAPTCHA_SECRET_KEY, response: String(token), remoteip: ip || '' });
+    const res = await fetch('https://www.google.com/recaptcha/api/siteverify', { method: 'POST', body, signal: ctrl.signal });
+    clearTimeout(t);
+    const data = await res.json();
+    return !!(data && data.success);
+  } catch (e) {
+    console.error('verifyCaptcha failed:', e.message);
+    return false; // fail closed once configured: a broken check should never let spam through
+  }
+}
+
 function createSession(userId) {
   const token = crypto.randomBytes(32).toString('hex');
   db.sessions = db.sessions.filter((s) => s.exp > Date.now());
@@ -110,7 +140,7 @@ const displayName = (u) => u.deleted ? '' : (u.type === 'company' && u.business 
 const avatarUrl = (u) => (u.avatar ? '/api/users/' + u.id + '/avatar?v=' + u.avatarV : null);
 const publicUser = (u) => ({
   avatarUrl: avatarUrl(u), id: u.id, type: u.type, gender: u.gender || null, birth: u.birth || null, first: u.first, last: u.last, email: u.email, phone: u.phone, name: displayName(u),
-  position: u.position || null, business: u.business || null, verified: !!u.verified, emailVerified: !!u.emailVerified, createdAt: u.createdAt,
+  position: u.position || null, business: u.business || null, verified: !!u.verified, emailVerified: !!u.emailVerified, hasPassword: !!u.passHash, createdAt: u.createdAt,
 });
 
 /**
@@ -214,6 +244,26 @@ async function lookupCompany({ type, number, first = '', last = '' }) {
   return demoLookupCompany({ type, number: digits, first, last });
 }
 
+// ---------- Google Sign-In ----------
+// Verifies the ID token from Google Identity Services (the "Sign in with Google" JS button) and
+// returns the verified profile, or null if it's missing / invalid / expired / wrong audience.
+async function verifyGoogleToken(credential) {
+  if (!googleClient || !credential) return null;
+  try {
+    const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: GOOGLE_CLIENT_ID });
+    const p = ticket.getPayload();
+    if (!p || !p.email || !p.email_verified) return null;
+    return {
+      sub: p.sub, email: String(p.email).toLowerCase(),
+      first: p.given_name || (p.name || '').split(' ')[0] || 'User',
+      last: p.family_name || (p.name || '').split(' ').slice(1).join(' ') || '',
+    };
+  } catch (e) {
+    console.error('verifyGoogleToken failed:', e.message);
+    return null;
+  }
+}
+
 // ---------- Rate limiting (in memory) ----------
 const hits = new Map();
 function limit(name, max, windowMs) {
@@ -275,6 +325,7 @@ app.post('/api/auth/register', limit('reg', 20, 60 * 60e3), async (req, res) => 
   const errors = {};
   const type = TYPES.includes(b.type) ? b.type : null;
   if (!type) return res.status(400).json({ error: 'invalid', errors: { type: 'required' } });
+  const captchaOk = await verifyCaptcha(b.captcha, req.ip);
 
   const first = clean(b.first, 60), last = clean(b.last, 80), email = clean(b.email, 254).toLowerCase();
   const phone = clean(b.phone, 30), password = String(b.password ?? '');
@@ -300,6 +351,7 @@ app.post('/api/auth/register', limit('reg', 20, 60 * 60e3), async (req, res) => 
     if (!POSITIONS.includes(b.position)) errors.position = 'required'; else position = b.position;
     if (b.authority !== true) errors.authority = 'authority';
   }
+  if (!captchaOk) errors.captcha = 'captcha_invalid';
   if (Object.keys(errors).length) return res.status(400).json({ error: 'invalid', errors });
   if (db.users.some((u) => u.email === email)) return res.status(409).json({ error: 'invalid', errors: { email: 'email_taken' } });
 
@@ -324,7 +376,7 @@ app.post('/api/auth/login', limit('login', 15, 10 * 60e3), (req, res) => {
   const password = String((req.body && req.body.password) ?? '');
   const user = db.users.find((u) => u.email === email && !u.deleted);
   // same work + same answer for unknown e-mail and wrong password
-  const ok = user ? verifyPassword(password, user.passHash) : (crypto.scryptSync(password, 'x'.repeat(16), 64), false);
+  const ok = user && user.passHash ? verifyPassword(password, user.passHash) : (crypto.scryptSync(password, 'x'.repeat(16), 64), false);
   if (!ok) return res.status(401).json({ error: 'bad_credentials' });
   const token = createSession(user.id);
   save();
@@ -360,6 +412,67 @@ app.post('/api/auth/resend-verification', auth, limit('resendverif', 5, 60 * 60e
     `Cześć ${req.user.first},\n\nPotwierdź swój adres e-mail:\n${verifyUrl}\n\n— BudTut`,
     `<p>Cześć ${escapeHtml(req.user.first)},</p><p><a href="${verifyUrl}">${verifyUrl}</a></p>`);
   res.json({ ok: true });
+});
+
+// ----- Google Sign-In -----
+// Step 1: verify the Google ID token. An existing account (matched by Google account id, or by an
+// already-registered matching e-mail) logs straight in; a brand-new Google user gets their
+// verified name/e-mail back so the frontend can collect the few fields Google doesn't provide
+// (phone, birth date, gender, terms) before step 2 actually creates the account.
+app.post('/api/auth/google', limit('google', 30, 60 * 60e3), async (req, res) => {
+  if (!googleClient) return res.status(501).json({ error: 'google_not_configured' });
+  const profile = await verifyGoogleToken(req.body && req.body.credential);
+  if (!profile) return res.status(401).json({ error: 'invalid_token' });
+  let user = db.users.find((u) => u.googleId === profile.sub && !u.deleted);
+  if (!user) user = db.users.find((u) => u.email === profile.email && !u.deleted);
+  if (user) {
+    if (!user.googleId) user.googleId = profile.sub;
+    if (!user.emailVerified) user.emailVerified = true;
+    save();
+    const token = createSession(user.id);
+    return res.json({ token, user: publicUser(user), isNew: false });
+  }
+  res.json({ isNew: true, profile: { first: profile.first, last: profile.last, email: profile.email } });
+});
+
+// Step 2: create the account. Private-person accounts only -- sole-trader (JDG) and company
+// accounts need the full business lookup/verification flow, which Google can't provide.
+app.post('/api/auth/google/register', limit('google', 30, 60 * 60e3), async (req, res) => {
+  if (!googleClient) return res.status(501).json({ error: 'google_not_configured' });
+  const profile = await verifyGoogleToken(req.body && req.body.credential);
+  if (!profile) return res.status(401).json({ error: 'invalid_token' });
+  if (db.users.some((u) => u.googleId === profile.sub || u.email === profile.email)) {
+    return res.status(409).json({ error: 'invalid', errors: { email: 'email_taken' } });
+  }
+  const b = req.body || {};
+  const errors = {};
+  const phone = clean(b.phone, 30);
+  const digits = phone.replace(/\D/g, '');
+  if (!phone) errors.phone = 'required';
+  else if (!/^\+?[\d\s()-]+$/.test(phone) || digits.length < 9 || digits.length > 15) errors.phone = 'phone_invalid';
+  const birthErr = birthCheck(b.birth); if (birthErr) errors.birth = birthErr;
+  let gender = null;
+  if (GENDERS.includes(b.gender)) gender = b.gender; else errors.gender = 'required';
+  if (b.terms !== true) errors.terms = 'terms';
+  const captchaOk = await verifyCaptcha(b.captcha, req.ip);
+  if (!captchaOk) errors.captcha = 'captcha_invalid';
+  if (Object.keys(errors).length) return res.status(400).json({ error: 'invalid', errors });
+
+  const user = {
+    id: uid(), type: 'person', gender, birth: b.birth, first: profile.first, last: profile.last, email: profile.email, phone,
+    position: null, business: null, passHash: null, googleId: profile.sub, verified: false, emailVerified: true,
+    createdAt: new Date().toISOString(),
+  };
+  db.users.push(user);
+  const token = createSession(user.id);
+  save();
+  res.status(201).json({ token, user: publicUser(user) });
+});
+
+// Public, non-secret configuration the frontend needs (Google client id, reCAPTCHA site key).
+// Both are safe to expose -- they identify the app to Google, neither authenticates anything.
+app.get('/api/config', (req, res) => {
+  res.json({ googleClientId: GOOGLE_CLIENT_ID || null, recaptchaSiteKey: RECAPTCHA_SITE_KEY || null });
 });
 
 // ----- Registry lookup (used by the registration form) -----
