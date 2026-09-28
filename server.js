@@ -147,12 +147,15 @@ const publicUser = (u) => ({
  * Company registry lookup.
  *   sp. z o.o. by KRS number -> REAL data, free, no API key: the Ministry of Justice's own
  *   public KRS API (the same data https://wyszukiwarka-krs.ms.gov.pl shows).
- *   JDG by NIP / company by NIP (not KRS) -> a real check needs the CEIDG "Hurtownia danych"
- *   API (free, but registration requires logging in with a Profil Zaufany at
- *   dane.biznes.gov.pl -> set CEIDG_JWT once you have it). Until then this clearly-marked demo
- *   lookup keeps the registration form usable.
+ *   company by NIP (not KRS) -> the Ministry of Finance's free, keyless "Biała Lista" VAT
+ *   payer registry (wl-api.mf.gov.pl) returns the KRS number for most sp. z o.o., which we then
+ *   feed straight back into the KRS lookup above for the real, full record.
+ *   JDG by NIP -> a real check needs the CEIDG "Hurtownia danych" API (free, but registration
+ *   requires logging in with a Profil Zaufany at dane.biznes.gov.pl -> set CEIDG_JWT once you
+ *   have it). Until then this clearly-marked demo lookup keeps the registration form usable.
  */
 const KRS_API = 'https://api-krs.ms.gov.pl/api/krs/OdpisAktualny';
+const WL_API = 'https://wl-api.mf.gov.pl/api/search/nip';
 
 async function fetchJson(url, timeoutMs = 8000) {
   const ctrl = new AbortController();
@@ -228,6 +231,20 @@ async function lookupKrs(krsNumber, { first = '', last = '' } = {}) {
   };
 }
 
+// A company NIP doesn't carry a KRS number itself, so resolve it through the free VAT-payer
+// "White List" first (no API key, no rate-limit key needed) -- its record for most sp. z o.o.
+// includes the KRS number, which we then hand to lookupKrs() for the real, full record (address,
+// board cross-check, wound-up check, all of it). Returns null if the White List has no match or
+// no KRS on file (not a limited company, or simply not VAT-registered) -- callers should not
+// invent data in that case.
+async function lookupNipCompany(nip, { first = '', last = '' } = {}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const data = await fetchJson(`${WL_API}/${encodeURIComponent(nip)}?date=${today}`);
+  const krs = data && data.result && data.result.subject && data.result.subject.krs;
+  if (!krs) return null;
+  return lookupKrs(krs, { first, last });
+}
+
 async function lookupCompany({ type, number, first = '', last = '' }) {
   const digits = String(number || '').replace(/\D/g, '');
   let kind = null;
@@ -240,7 +257,10 @@ async function lookupCompany({ type, number, first = '', last = '' }) {
   if (kind === 'krs') {
     return await lookupKrs(digits, { first, last }); // no demo fallback: an unknown KRS should just fail
   }
-  // kind === 'nip': real CEIDG (jdg) / NIP->KRS resolution (company) are TODO, see comment above.
+  if (kind === 'nip' && type === 'company') {
+    return await lookupNipCompany(digits, { first, last }); // no demo fallback here either, same reasoning
+  }
+  // kind === 'nip', type === 'jdg': real CEIDG resolution is TODO, see comment above.
   return demoLookupCompany({ type, number: digits, first, last });
 }
 
