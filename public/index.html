@@ -1841,11 +1841,14 @@ textarea.input { height: auto; min-height: 140px; padding: 14px 18px; resize: ve
   // ---------- Translations ----------
   const A = {
     PL: { logout: 'Wyloguj się', ac_hello: 'Zalogowano jako', toast_login: 'Zalogowano pomyślnie.', toast_logout: 'Wylogowano.',
-      err_credentials: 'Nieprawidłowy e-mail lub hasło.', err_network: 'Nie można połączyć z serwerem. Uruchom backend (npm start) i otwórz http://localhost:3000.', err_server: 'Coś poszło nie tak. Spróbuj ponownie.', err_rate: 'Zbyt wiele prób. Spróbuj za chwilę.', err_email_taken: 'Konto z tym adresem e-mail już istnieje.' },
+      err_credentials: 'Nieprawidłowy e-mail lub hasło.', err_network: 'Nie można połączyć z serwerem. Uruchom backend (npm start) i otwórz http://localhost:3000.', err_server: 'Coś poszło nie tak. Spróbuj ponownie.', err_rate: 'Zbyt wiele prób. Spróbuj za chwilę.', err_email_taken: 'Konto z tym adresem e-mail już istnieje.',
+      email_verify_ok: 'Adres e-mail potwierdzony. Dziękujemy!', email_verify_bad: 'Link potwierdzający jest nieprawidłowy lub wygasł.', email_check_toast: 'Konto utworzone! Sprawdź skrzynkę e-mail, aby potwierdzić adres.' },
     EN: { logout: 'Log out', ac_hello: 'Logged in as', toast_login: 'Logged in successfully.', toast_logout: 'Logged out.',
-      err_credentials: 'Incorrect e-mail or password.', err_network: 'Cannot reach the server. Start the backend (npm start) and open http://localhost:3000.', err_server: 'Something went wrong. Please try again.', err_rate: 'Too many attempts. Try again in a moment.', err_email_taken: 'An account with this e-mail already exists.' },
+      err_credentials: 'Incorrect e-mail or password.', err_network: 'Cannot reach the server. Start the backend (npm start) and open http://localhost:3000.', err_server: 'Something went wrong. Please try again.', err_rate: 'Too many attempts. Try again in a moment.', err_email_taken: 'An account with this e-mail already exists.',
+      email_verify_ok: 'Your e-mail address is confirmed. Thank you!', email_verify_bad: 'This confirmation link is invalid or has expired.', email_check_toast: 'Account created! Check your inbox to confirm your e-mail address.' },
     UA: { logout: 'Вийти', ac_hello: 'Ви увійшли як', toast_login: 'Ви успішно увійшли.', toast_logout: 'Ви вийшли.',
-      err_credentials: 'Невірний e-mail або пароль.', err_network: 'Не вдається з’єднатися із сервером. Запустіть бекенд (npm start) і відкрийте http://localhost:3000.', err_server: 'Щось пішло не так. Спробуйте ще раз.', err_rate: 'Забагато спроб. Спробуйте за мить.', err_email_taken: 'Акаунт із цією адресою e-mail вже існує.' },
+      err_credentials: 'Невірний e-mail або пароль.', err_network: 'Не вдається з’єднатися із сервером. Запустіть бекенд (npm start) і відкрийте http://localhost:3000.', err_server: 'Щось пішло не так. Спробуйте ще раз.', err_rate: 'Забагато спроб. Спробуйте за мить.', err_email_taken: 'Акаунт із цією адресою e-mail вже існує.',
+      email_verify_ok: 'Адресу e-mail підтверджено. Дякуємо!', email_verify_bad: 'Посилання для підтвердження недійсне або вичерпале.', email_check_toast: 'Акаунт створено! Перевірте пошту, щоб підтвердити e-mail.' },
   };
   Object.keys(A).forEach((l) => Object.assign(BT.I18N[l], A[l]));
 
@@ -1943,6 +1946,21 @@ textarea.input { height: auto; min-height: 140px; padding: 14px 18px; resize: ve
   }
 
   BT.refreshHeader = render; BT.api = api; BT.auth = auth; BT.setSession = setSession; BT.toast = toast; BT.errKey = errKey;
+
+  // ---------- Email verification link handler (?verifyEmail=token in the URL) ----------
+  (function () {
+    const params = new URLSearchParams(location.search);
+    const token = params.get('verifyEmail');
+    if (!token) return;
+    params.delete('verifyEmail');
+    const cleanUrl = location.pathname + (params.toString() ? '?' + params.toString() : '') + location.hash;
+    history.replaceState(null, '', cleanUrl);
+    api('/api/auth/verify-email?token=' + encodeURIComponent(token)).then((r) => {
+      toast(r.ok ? T('email_verify_ok') : T('email_verify_bad'));
+      if (r.ok && auth.token) api('/api/auth/me').then((r2) => { if (r2.ok) { auth.user = r2.data.user; render(); } });
+    });
+  })();
+
   render();
 })();
 
@@ -2322,6 +2340,7 @@ textarea.input { height: auto; min-height: 140px; padding: 14px 18px; resize: ve
       return;
     }
     BT.setSession(res.data.token, res.data.user);
+    BT.toast(T('email_check_toast'));
     if (co) { showOnboarding(); return; }
     done = res.data.user;
     form.classList.add('is-hidden');

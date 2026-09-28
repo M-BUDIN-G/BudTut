@@ -10,6 +10,7 @@ const express = require('express');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const nodemailer = require('nodemailer');
 
 const PORT = process.env.PORT || 3000;
 // On a host with an ephemeral filesystem (most PaaS "app" containers) this MUST point at a
@@ -18,6 +19,18 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const SESSION_DAYS = 30;
 const CANONICAL_HOST = process.env.CANONICAL_HOST || ''; // e.g. budtut.eu — redirects other hosts (www., etc.) to this one
+const APP_BASE_URL = process.env.APP_BASE_URL || (CANONICAL_HOST ? `https://${CANONICAL_HOST}` : `http://localhost:${PORT}`);
+// SMTP for verification e-mails. Any account works (a Gmail address with an "app password" is fine).
+// Without these set, e-mails are just logged to the console — the flow still works for local testing.
+const SMTP_HOST = process.env.SMTP_HOST || '';
+const SMTP_PORT = Number(process.env.SMTP_PORT || 465);
+const SMTP_USER = process.env.SMTP_USER || '';
+const SMTP_PASS = process.env.SMTP_PASS || '';
+const MAIL_FROM = process.env.MAIL_FROM || SMTP_USER;
+// Free public NIP->CEIDG check (JDG) needs a "Hurtownia danych" JWT from dane.biznes.gov.pl
+// (registration is free but requires logging in with a Profil Zaufany). Until this is set, JDG
+// lookups fall back to a clearly-marked demo result so the registration form stays usable.
+const CEIDG_JWT = process.env.CEIDG_JWT || '';
 
 // ---------- Tiny JSON database ----------
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -75,6 +88,17 @@ function verifyPassword(pw, stored) {
   return crypto.timingSafeEqual(test, Buffer.from(hash, 'hex'));
 }
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// ---------- Email (verification links etc.) ----------
+const mailer = SMTP_HOST && SMTP_USER && SMTP_PASS
+  ? nodemailer.createTransport({ host: SMTP_HOST, port: SMTP_PORT, secure: SMTP_PORT === 465, auth: { user: SMTP_USER, pass: SMTP_PASS } })
+  : null;
+async function sendMail(to, subject, text, html) {
+  if (!mailer) { console.log(`[mail:dev] to=${to} subject=${subject}\n${text}`); return; }
+  try { await mailer.sendMail({ from: MAIL_FROM, to, subject, text, html }); }
+  catch (e) { console.error('sendMail failed:', e.message); }
+}
 
 function createSession(userId) {
   const token = crypto.randomBytes(32).toString('hex');
@@ -86,14 +110,95 @@ const displayName = (u) => u.deleted ? '' : (u.type === 'company' && u.business 
 const avatarUrl = (u) => (u.avatar ? '/api/users/' + u.id + '/avatar?v=' + u.avatarV : null);
 const publicUser = (u) => ({
   avatarUrl: avatarUrl(u), id: u.id, type: u.type, gender: u.gender || null, birth: u.birth || null, first: u.first, last: u.last, email: u.email, phone: u.phone, name: displayName(u),
-  position: u.position || null, business: u.business || null, verified: !!u.verified, createdAt: u.createdAt,
+  position: u.position || null, business: u.business || null, verified: !!u.verified, emailVerified: !!u.emailVerified, createdAt: u.createdAt,
 });
 
 /**
- * Company registry lookup (DEMO).
- * TODO real version: JDG -> CEIDG API (api.biznes.gov.pl); company -> KRS / GUS REGON / Biała Lista VAT.
+ * Company registry lookup.
+ *   sp. z o.o. by KRS number -> REAL data, free, no API key: the Ministry of Justice's own
+ *   public KRS API (the same data https://wyszukiwarka-krs.ms.gov.pl shows).
+ *   JDG by NIP / company by NIP (not KRS) -> a real check needs the CEIDG "Hurtownia danych"
+ *   API (free, but registration requires logging in with a Profil Zaufany at
+ *   dane.biznes.gov.pl -> set CEIDG_JWT once you have it). Until then this clearly-marked demo
+ *   lookup keeps the registration form usable.
  */
-function lookupCompany({ type, number, first = '', last = '' }) {
+const KRS_API = 'https://api-krs.ms.gov.pl/api/krs/OdpisAktualny';
+
+async function fetchJson(url, timeoutMs = 8000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: 'application/json' } });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    console.error('fetchJson failed:', url, e.message);
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function demoLookupCompany({ type, number, first = '', last = '' }) {
+  const nip = String(number || '').replace(/\D/g, '');
+  const regon = String(Number(nip.slice(0, 9)) % 1e9).padStart(9, '0');
+  if (type === 'jdg') {
+    const owner = (first || last ? `${first} ${last}`.trim() : 'Jan Kowalski').toUpperCase();
+    return { name: `${owner} USŁUGI REMONTOWE`, nip, regon, city: 'Gdańsk', active: true, source: 'demo' };
+  }
+  return {
+    name: 'DEMO BUDOWLANA SP. Z O.O.', nip, krs: '0000' + nip.slice(0, 6), regon,
+    legal: 'legal_sp_zoo', address: 'ul. Przykładowa 10, 80-000 Gdańsk', city: 'Gdańsk', active: true, source: 'demo',
+  };
+}
+
+// Only legal form this platform has a translated label for (see `legal_sp_zoo` in the frontend).
+function mapLegalForm(formaPrawna) {
+  const f = String(formaPrawna || '').toUpperCase();
+  return f === 'SPÓŁKA Z OGRANICZONĄ ODPOWIEDZIALNOŚCIĄ' ? 'legal_sp_zoo' : null;
+}
+
+async function lookupKrs(krsNumber, { first = '', last = '' } = {}) {
+  const data = await fetchJson(`${KRS_API}/${encodeURIComponent(krsNumber)}?rejestr=P&format=json`);
+  const dzial1 = data && data.odpis && data.odpis.dane && data.odpis.dane.dzial1;
+  const podmiot = dzial1 && dzial1.danePodmiotu;
+  if (!podmiot || !podmiot.nazwa) return null; // not found / bad number
+
+  const legal = mapLegalForm(podmiot.formaPrawna);
+  if (!legal) return null; // legal form we don't support yet (only sp. z o.o.)
+
+  // Being wound up / bankrupt / struck off shows up as populated dzial6 sections.
+  const dzial6 = data.odpis.dane.dzial6 || {};
+  const beingWoundUp = !!(dzial6.likwidacja || dzial6.postepowanieUpadlosciowe
+    || (Array.isArray(dzial6.rozwiazanieUniewaznienie) && dzial6.rozwiazanieUniewaznienie.length));
+  if (beingWoundUp) return null; // the frontend has no "inactive" state yet, so treat as not usable
+
+  const a = (dzial1.siedzibaIAdres && dzial1.siedzibaIAdres.adres) || {};
+  const street = [a.ulica, a.nrDomu].filter(Boolean).join(' ') + (a.nrLokalu ? `/${a.nrLokalu}` : '');
+  const address = [street, [a.kodPocztowy, a.miejscowosc].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+
+  // Cross-check the declared representative's initials against the management board ("zarząd").
+  // The public API only exposes first-letter-masked names (e.g. "M******"), so this is a light
+  // signal for the admin reviewing the request, never a substitute for real identity checks.
+  const board = (data.odpis.dane.dzial2 && data.odpis.dane.dzial2.reprezentacja && data.odpis.dane.dzial2.reprezentacja.sklad) || [];
+  const fi = (first || '').trim().charAt(0).toUpperCase();
+  const li = (last || '').trim().charAt(0).toUpperCase();
+  const repMatch = !!(fi && li && board.some((m) => {
+    const mLast = m.nazwisko && m.nazwisko.nazwiskoICzlon && m.nazwisko.nazwiskoICzlon.charAt(0);
+    const mFirst = m.imiona && m.imiona.imie && m.imiona.imie.charAt(0);
+    return mLast === li && mFirst === fi;
+  }));
+
+  return {
+    name: podmiot.nazwa,
+    nip: (podmiot.identyfikatory && podmiot.identyfikatory.nip) || '',
+    krs: krsNumber,
+    regon: (podmiot.identyfikatory && podmiot.identyfikatory.regon) || '',
+    legal, address, city: a.miejscowosc || '', active: true, repMatch, source: 'krs',
+  };
+}
+
+async function lookupCompany({ type, number, first = '', last = '' }) {
   const digits = String(number || '').replace(/\D/g, '');
   let kind = null;
   if (digits.length === 10) {
@@ -101,16 +206,12 @@ function lookupCompany({ type, number, first = '', last = '' }) {
     else if (nipValid(digits)) kind = 'nip';
   }
   if (!kind) return null;
-  const nip = kind === 'krs' ? '1234563218' : digits;
-  const regon = String(Number(nip.slice(0, 9)) % 1e9).padStart(9, '0');
-  if (type === 'jdg') {
-    const owner = (first || last ? `${first} ${last}`.trim() : 'Jan Kowalski').toUpperCase();
-    return { name: `${owner} USŁUGI REMONTOWE`, nip, regon, city: 'Gdańsk', active: true };
+
+  if (kind === 'krs') {
+    return await lookupKrs(digits, { first, last }); // no demo fallback: an unknown KRS should just fail
   }
-  return {
-    name: 'DEMO BUDOWLANA SP. Z O.O.', nip, krs: kind === 'krs' ? digits : '0000' + nip.slice(0, 6), regon,
-    legal: 'legal_sp_zoo', address: 'ul. Przykładowa 10, 80-000 Gdańsk', city: 'Gdańsk', active: true,
-  };
+  // kind === 'nip': real CEIDG (jdg) / NIP->KRS resolution (company) are TODO, see comment above.
+  return demoLookupCompany({ type, number: digits, first, last });
 }
 
 // ---------- Rate limiting (in memory) ----------
@@ -169,7 +270,7 @@ function auth(req, res, next) {
 }
 
 // ----- Auth -----
-app.post('/api/auth/register', limit('reg', 20, 60 * 60e3), (req, res) => {
+app.post('/api/auth/register', limit('reg', 20, 60 * 60e3), async (req, res) => {
   const b = req.body || {};
   const errors = {};
   const type = TYPES.includes(b.type) ? b.type : null;
@@ -191,7 +292,7 @@ app.post('/api/auth/register', limit('reg', 20, 60 * 60e3), (req, res) => {
   if (type !== 'company') { if (GENDERS.includes(b.gender)) gender = b.gender; else errors.gender = 'required'; }
   let business = null, position = null;
   if (type !== 'person') {
-    business = lookupCompany({ type, number: b.business && b.business.number, first, last });
+    business = await lookupCompany({ type, number: b.business && b.business.number, first, last });
     if (!business) errors.business = 'business_invalid';
     else if (!b.business.confirmed) errors.business = 'business_unconfirmed';
   }
@@ -202,13 +303,19 @@ app.post('/api/auth/register', limit('reg', 20, 60 * 60e3), (req, res) => {
   if (Object.keys(errors).length) return res.status(400).json({ error: 'invalid', errors });
   if (db.users.some((u) => u.email === email)) return res.status(409).json({ error: 'invalid', errors: { email: 'email_taken' } });
 
+  const emailVerifyToken = crypto.randomBytes(24).toString('hex');
   const user = {
     id: uid(), type, gender, birth: b.birth, first, last, email, phone, position, business,
     passHash: hashPassword(password), verified: false, createdAt: new Date().toISOString(),
+    emailVerified: false, emailVerifyTokenHash: sha(emailVerifyToken), emailVerifyExpires: Date.now() + 24 * 3600e3,
   };
   db.users.push(user);
   const token = createSession(user.id);
   save();
+  const verifyUrl = `${APP_BASE_URL}/?verifyEmail=${emailVerifyToken}`;
+  sendMail(user.email, 'Potwierdź swój adres e-mail – BudTut',
+    `Cześć ${first},\n\nPotwierdź swój adres e-mail, klikając w link:\n${verifyUrl}\n\nLink jest ważny 24 godziny.\n\n— BudTut`,
+    `<p>Cześć ${escapeHtml(first)},</p><p>Potwierdź swój adres e-mail, klikając w link poniżej:</p><p><a href="${verifyUrl}">${verifyUrl}</a></p><p>Link jest ważny 24 godziny.</p><p>— BudTut</p>`);
   res.status(201).json({ token, user: publicUser(user) });
 });
 
@@ -231,10 +338,34 @@ app.post('/api/auth/logout', auth, (req, res) => {
   save(); res.json({ ok: true });
 });
 
+// ----- Email verification -----
+app.get('/api/auth/verify-email', limit('verifyemail', 30, 60 * 60e3), (req, res) => {
+  const token = String(req.query.token || '');
+  if (!/^[0-9a-f]{48}$/.test(token)) return res.status(400).json({ error: 'invalid' });
+  const h = sha(token);
+  const user = db.users.find((u) => u.emailVerifyTokenHash === h && !u.deleted);
+  if (!user || !user.emailVerifyExpires || user.emailVerifyExpires < Date.now()) return res.status(400).json({ error: 'invalid_or_expired' });
+  user.emailVerified = true;
+  delete user.emailVerifyTokenHash; delete user.emailVerifyExpires;
+  save();
+  res.json({ ok: true });
+});
+app.post('/api/auth/resend-verification', auth, limit('resendverif', 5, 60 * 60e3), (req, res) => {
+  if (req.user.emailVerified) return res.status(409).json({ error: 'already_verified' });
+  const token = crypto.randomBytes(24).toString('hex');
+  req.user.emailVerifyTokenHash = sha(token); req.user.emailVerifyExpires = Date.now() + 24 * 3600e3;
+  save();
+  const verifyUrl = `${APP_BASE_URL}/?verifyEmail=${token}`;
+  sendMail(req.user.email, 'Potwierdź swój adres e-mail – BudTut',
+    `Cześć ${req.user.first},\n\nPotwierdź swój adres e-mail:\n${verifyUrl}\n\n— BudTut`,
+    `<p>Cześć ${escapeHtml(req.user.first)},</p><p><a href="${verifyUrl}">${verifyUrl}</a></p>`);
+  res.json({ ok: true });
+});
+
 // ----- Registry lookup (used by the registration form) -----
-app.get('/api/lookup', limit('lookup', 60, 60e3), (req, res) => {
+app.get('/api/lookup', limit('lookup', 60, 60e3), async (req, res) => {
   const type = req.query.type === 'jdg' ? 'jdg' : 'company';
-  const found = lookupCompany({ type, number: req.query.number, first: clean(req.query.first, 60), last: clean(req.query.last, 80) });
+  const found = await lookupCompany({ type, number: req.query.number, first: clean(req.query.first, 60), last: clean(req.query.last, 80) });
   if (!found) return res.status(404).json({ error: 'not_found' });
   res.json({ business: found });
 });
@@ -395,7 +526,7 @@ app.get('/api/verification/mine', auth, (req, res) => {
   const list = db.verifications.filter((v) => v.userId === req.user.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   res.json({ verified: !!req.user.verified, request: list[0] ? { id: list[0].id, type: list[0].type, status: list[0].status, createdAt: list[0].createdAt, name: list[0].name } : null });
 });
-app.post('/api/verification', auth, limit('verif', 10, 60 * 60e3), (req, res) => {
+app.post('/api/verification', auth, limit('verif', 10, 60 * 60e3), async (req, res) => {
   const b = req.body || {}, errors = {};
   if (!TYPES.includes(b.type)) return res.status(400).json({ error: 'invalid', errors: { type: 'required' } });
   if (req.user.verified) return res.status(409).json({ error: 'already_verified' });
@@ -416,9 +547,13 @@ app.post('/api/verification', auth, limit('verif', 10, 60 * 60e3), (req, res) =>
     }
     rec.name = `${first} ${last}`;
   } else {
-    const biz = lookupCompany({ type: b.type, number: b.business && b.business.number, first, last });
+    const biz = await lookupCompany({ type: b.type, number: b.business && b.business.number, first, last });
     if (!biz) errors.business = 'business_invalid'; else if (!b.business.confirmed) errors.business = 'business_unconfirmed';
-    else { rec.business = { name: biz.name, nip: biz.nip, krs: biz.krs || null }; rec.name = biz.name; }
+    else {
+      rec.business = { name: biz.name, nip: biz.nip, krs: biz.krs || null };
+      rec.name = biz.name; rec.source = biz.source || null;
+      if (biz.repMatch !== undefined) rec.repMatch = biz.repMatch;
+    }
     if (b.type === 'company') {
       if (!POSITIONS.includes(b.position)) errors.position = 'required'; else rec.position = b.position;
       if (b.authority !== true) errors.authority = 'authority';
@@ -570,6 +705,34 @@ app.post('/api/admin/deletion-requests/:ref/:action', admin, (req, res) => {
   else if (req.params.action === 'reject') { r.status = 'rejected'; r.note = cleanML((req.body || {}).note, 500); }
   else return res.status(404).json({ error: 'not_found' });
   r.decidedAt = new Date().toISOString(); save(); res.json({ ok: true, status: r.status });
+});
+
+// Pending identity/business verification requests (created by POST /api/verification).
+// Approving sets user.verified = true; this is the missing other half of that TODO.
+app.get('/api/admin/verifications', admin, (req, res) => {
+  res.json({ requests: db.verifications.map((v) => {
+    const u = db.users.find((x) => x.id === v.userId);
+    return {
+      id: v.id, type: v.type, status: v.status, createdAt: v.createdAt, name: v.name,
+      applicant: v.applicant || null, business: v.business || null,
+      repMatch: v.repMatch === undefined ? null : v.repMatch, source: v.source || null,
+      position: v.position || null, email: u ? u.email : null, currentlyVerified: !!(u && u.verified),
+    };
+  }) });
+});
+app.post('/api/admin/verifications/:id/:action', admin, (req, res) => {
+  const v = db.verifications.find((x) => x.id === req.params.id);
+  if (!v) return res.status(404).json({ error: 'not_found' });
+  if (v.status !== 'pending') return res.status(409).json({ error: 'already_decided', status: v.status });
+  if (req.params.action === 'approve') {
+    const u = db.users.find((x) => x.id === v.userId);
+    if (u) u.verified = true;
+    v.status = 'approved';
+  } else if (req.params.action === 'reject') {
+    v.status = 'rejected'; v.note = cleanML((req.body || {}).note, 500);
+  } else return res.status(404).json({ error: 'not_found' });
+  v.decidedAt = new Date().toISOString(); save();
+  res.json({ ok: true, status: v.status });
 });
 
 // ---------- Contact form & DSA notices ----------

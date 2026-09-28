@@ -29,7 +29,21 @@ async function call(path, method, body) {
   } else if ((cmd === 'approve' || cmd === 'reject') && ref) {
     const r = await call(`/api/admin/deletion-requests/${encodeURIComponent(ref)}/${cmd}`, 'POST', cmd === 'reject' ? { note: rest.join(' ') } : undefined);
     console.log(r.ok ? `${ref}: ${r.data.status}` : `Error ${r.status} ${JSON.stringify(r.data)}`);
+  } else if (cmd === 'verifications') {
+    const r = await call('/api/admin/verifications', 'GET');
+    if (!r.ok) { console.error('Error', r.status, r.data); process.exit(1); }
+    if (!r.data.requests.length) return console.log('No requests.');
+    r.data.requests.forEach((x) => console.log(
+      `${x.id}  [${x.status}]  ${x.createdAt.slice(0, 10)}  ${x.type}  ${x.name} <${x.email}>` +
+      (x.business ? `\n    business: ${x.business.name}  NIP ${x.business.nip}${x.business.krs ? '  KRS ' + x.business.krs : ''}  (source: ${x.source || '?'}, repMatch: ${x.repMatch})` : '') +
+      (x.position ? `\n    position: ${x.position}` : '')
+    ));
+  } else if ((cmd === 'verify-approve' || cmd === 'verify-reject') && ref) {
+    const action = cmd === 'verify-approve' ? 'approve' : 'reject';
+    const r = await call(`/api/admin/verifications/${encodeURIComponent(ref)}/${action}`, 'POST', action === 'reject' ? { note: rest.join(' ') } : undefined);
+    console.log(r.ok ? `${ref}: ${r.data.status}` : `Error ${r.status} ${JSON.stringify(r.data)}`);
   } else {
-    console.log('Usage: node admin.js list | approve <ref> | reject <ref> [reason]');
+    console.log('Usage: node admin.js list | approve <ref> | reject <ref> [reason]\n' +
+      '       node admin.js verifications | verify-approve <id> | verify-reject <id> [reason]');
   }
 })();
